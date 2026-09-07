@@ -470,10 +470,37 @@ single band). Do not present this result as validating cross-modal registration
 against real IIRS hyperspectral characteristics. A real IIRS PDS4 sample with genuine
 multi-band content should be used for a stronger validation pass as follow-up work.
 
+### Extreme-Scale Composed Registration (`CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS`)
+
+- **Extreme-Scale Routing**:
+  - `CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS` evaluates to `is_implemented=True` with recommended pipeline stage `extreme_scale_composed_v1` (`backend/routing/pair_classifier.py:L79-84`).
+  - The ~394× scale gap between OHRC (~0.25 m/px) and IIRS (~82.70 m/px) makes direct feature matching unreliable. Instead, registration is composed through a TMC-2 bridge image:
+    - **Stage A**: OHRC → TMC-2 via `register_cross_scale()` (~20× ratio, SIFT/FLANN/MAGSAC++ with resolution normalization) → `M_A` (affine 2×3)
+    - **Stage B**: TMC-2 → IIRS via `register_cross_modal()` (~19.4× ratio, Phase Congruency + SIFT/FLANN/MAGSAC++) → `M_B` (affine 2×3)
+    - **Stage C**: Algebraic composition `M_composed = M_B @ M_A` (pure matrix multiplication, NO re-matching or feature re-extraction)
+  - The composed transform `M_composed` maps full-resolution OHRC pixel coordinates directly to IIRS pixel coordinates in a single affine warp.
+  - Requires a real TMC-2 bridge image that overlaps both the OHRC and IIRS scenes.
+  - Implementation: `backend/core/extreme_scale_registration.py`
+
+#### Known Limitations (Extreme-Scale Composed Registration)
+
+KNOWN LIMITATION: The current OHRC↔IIRS extreme-scale composed registration has been
+validated ONLY on synthetic composed transforms with known ground-truth matrices
+(algebraic composition of predetermined M_A and M_B matrices verified to atol=1e-12).
+This proves the transform composition math is correct but does NOT demonstrate
+registration performance on real overlapping OHRC/TMC-2/IIRS imagery. No such
+overlapping triple fixture (OHRC + TMC-2 + IIRS covering the same lunar region)
+currently exists in the project repository. Additionally, the composed transform's
+accuracy is bounded by the accuracy of both individual stages: errors from Stage A
+(OHRC→TMC-2) and Stage B (TMC-2→IIRS) accumulate through composition. Do not present
+the synthetic test results as demonstrating real-world extreme-scale registration
+performance. Obtaining overlapping OHRC/TMC-2/IIRS fixtures for proper end-to-end
+validation is listed as follow-up work.
+
 ### Routing Edge Cases and Guard Behavior
 
 - **Behavior on Rejection**:
-  - Unsupported cross-instrument pairs (`CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS` combining ~394x extreme scale and visible-to-infrared cross-modality) have `is_implemented=False` (`backend/routing/pair_classifier.py:L79-84`).
+  - Unrecognized or truly unsupported cross-instrument pairs have `is_implemented=False`.
   - The pipeline immediately halts and returns a `RegistrationPipelineResult` with `success=False`, `failure_stage="pair_classification"`, and a descriptive `failure_reason` citing the pair category and required algorithmic capabilities.
   - Downstream stages (`load_image`, `to_feature_image`, `extract_sift`, `flann_knn_match`, `estimate_transform`, `warp_image`) are completely bypassed (`timings` remains empty).
 
@@ -494,9 +521,9 @@ Supported:
 - `classical_sift` (same-modality baseline: TMC2-TMC2, OHRC-OHRC, IIRS-IIRS, UNCLASSIFIED)
 - `cross_scale_affine_v1` (cross-scale OHRC ↔ TMC-2 via resolution normalization and composed affine transform)
 - `cross_modal_phase_congruency_v1` (cross-modal TMC-2 ↔ IIRS visible-to-infrared via phase congruency, resolution normalization, and composed affine transform)
+- `extreme_scale_composed_v1` (extreme-scale OHRC ↔ IIRS via composed TMC-2 bridge: OHRC→TMC-2 cross-scale + TMC-2→IIRS cross-modal, algebraic affine composition — synthetic validation only)
 
 Not yet supported:
-- Extreme-scale cross-modal (OHRC ↔ IIRS: ~394x scale + visible-to-infrared)
 - Deep structural representations (MIND, RIFT)
 - Multi-level pyramid feature tracking / ROI refinement on full-resolution OHRC
 - Crater morphological anchoring

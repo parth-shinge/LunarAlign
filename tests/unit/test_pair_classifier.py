@@ -81,14 +81,12 @@ class TestCrossInstrumentClassification:
         assert result.instrument_a == "OHRC"
         assert result.instrument_b == "IIRS"
         assert result.is_same_instrument is False
-        assert result.is_implemented is False
-        assert result.recommended_pipeline_stage == "not_implemented"
+        assert result.is_implemented is True
+        assert result.recommended_pipeline_stage == "extreme_scale_composed_v1"
         assert len(result.reason) > 0
         assert "scale" in result.reason.lower()
-        assert "82.70" in result.reason
-        assert any(
-            cap in result.reason for cap in ["Phase Congruency", "MIND", "RIFT", "cross-modal"]
-        )
+        assert "TMC-2 bridge" in result.reason
+        assert "synthetic" in result.reason.lower()
 
 
 class TestOrderIndependence:

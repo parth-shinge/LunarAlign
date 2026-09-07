@@ -78,9 +78,9 @@ _PAIR_CONFIGS: dict[tuple[str, str], tuple[PairType, bool, str, str]] = {
     ),
     ("IIRS", "OHRC"): (
         PairType.CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS,
-        False,
-        "not_implemented",
-        "Cross-modal extreme scale pair (OHRC ~0.25m/px visible vs IIRS 82.70m/px infrared [confirmed from fixture isda:pixel_resolution], >300x ratio); requires cross-modal matching (Phase Congruency/MIND/RIFT) and coarse-to-fine scale handling.",
+        True,
+        "extreme_scale_composed_v1",
+        "Cross-modal extreme scale pair (OHRC ~0.25m/px visible vs IIRS 82.70m/px infrared, ~394x ratio); supported via composed registration through TMC-2 bridge (OHRC→TMC-2 cross-scale + TMC-2→IIRS cross-modal, NO direct OHRC→IIRS matching). Validated on synthetic composed transforms only — not yet validated on real overlapping OHRC/TMC-2/IIRS imagery.",
     ),
 }
 

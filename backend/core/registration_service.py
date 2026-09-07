@@ -40,6 +40,7 @@ import numpy as np
 
 from backend.core.cross_modal_registration import register_cross_modal
 from backend.core.cross_scale_registration import register_cross_scale
+from backend.core.extreme_scale_registration import register_extreme_scale
 from backend.evaluation.metrics import MatchQualitySummary, build_quality_summary
 from backend.evaluation.spatial import compute_spatial_distribution, SpatialDistribution
 from backend.evaluation.visualization import (
@@ -561,6 +562,206 @@ def _run_cross_modal_registration(
     )
 
 
+def _run_extreme_scale_registration(
+    ref_path: str | Path,
+    tgt_path: str | Path,
+    *,
+    classification: Any,
+    tmc2_bridge_path: str | Path,
+    transform_model: str,
+    ratio_threshold: float,
+    reproj_threshold: float,
+    confidence: float,
+    result_id: str,
+    total_start: float,
+) -> RegistrationPipelineResult:
+    """Execute extreme-scale composed registration for OHRC<->IIRS pairs via TMC-2 bridge.
+
+    Calls register_extreme_scale() which internally chains:
+      Stage A: OHRC -> TMC-2 (cross-scale, ~20x)
+      Stage B: TMC-2 -> IIRS (cross-modal, ~19.4x)
+      Stage C: Algebraic composition M_composed = M_B @ M_A
+    """
+    pipeline_mode = classification.recommended_pipeline_stage
+    timings: dict[str, float] = {}
+
+    # 1. Transform model check
+    if transform_model != "affine":
+        return RegistrationPipelineResult(
+            result_id=result_id,
+            success=False,
+            pipeline_mode=pipeline_mode,
+            failure_reason=(
+                f"Unsupported transform model '{transform_model}' for extreme-scale registration. "
+                "Extreme-scale composed registration only supports affine "
+                "(composition math is affine-only)."
+            ),
+            failure_stage="configuration",
+            pair_type=classification.pair_type.value,
+        )
+
+    # 2. Load all three images: OHRC, TMC-2 bridge, IIRS
+    t0 = time.perf_counter()
+    try:
+        ref_raw = load_image(ref_path)
+        tgt_raw = load_image(tgt_path)
+        tmc2_raw = load_image(tmc2_bridge_path)
+    except Exception as exc:
+        return RegistrationPipelineResult(
+            result_id=result_id,
+            success=False,
+            pipeline_mode=pipeline_mode,
+            failure_reason=f"Failed to load images: {exc}",
+            failure_stage="load",
+            pair_type=classification.pair_type.value,
+        )
+    timings["load"] = time.perf_counter() - t0
+
+    # 3. Identify OHRC vs IIRS using classification instrument ordering
+    if classification.instrument_a == "OHRC":
+        ohrc_raw, iirs_raw = ref_raw, tgt_raw
+        ohrc_path, iirs_path = ref_path, tgt_path
+    else:
+        ohrc_raw, iirs_raw = tgt_raw, ref_raw
+        ohrc_path, iirs_path = tgt_path, ref_path
+
+    ohrc_res = _extract_resolution(ohrc_path, "OHRC")
+    iirs_res = _extract_resolution(iirs_path, "IIRS")
+    tmc2_res = _extract_resolution(tmc2_bridge_path, "TMC2")
+
+    # 4. Execute extreme-scale composed registration
+    t0 = time.perf_counter()
+    try:
+        extreme_res = register_extreme_scale(
+            ohrc_image=ohrc_raw.data,
+            ohrc_resolution_m_per_px=ohrc_res,
+            iirs_image=iirs_raw.data,
+            iirs_resolution_m_per_px=iirs_res,
+            tmc2_image=tmc2_raw.data,
+            tmc2_resolution_m_per_px=tmc2_res,
+            tmc2_bridge_path=str(tmc2_bridge_path),
+            transform_model="affine",
+            ratio_threshold=ratio_threshold,
+            reproj_threshold=reproj_threshold,
+            confidence=confidence,
+        )
+    except Exception as exc:
+        return RegistrationPipelineResult(
+            result_id=result_id,
+            success=False,
+            pipeline_mode=pipeline_mode,
+            failure_reason=f"Extreme-scale composed registration failed: {exc}",
+            failure_stage="extreme_scale_registration",
+            pair_type=classification.pair_type.value,
+            timings=timings,
+        )
+    timings["extreme_scale_registration"] = time.perf_counter() - t0
+    timings.update(extreme_res.timings)
+
+    if not extreme_res.success:
+        return RegistrationPipelineResult(
+            result_id=result_id,
+            success=False,
+            pipeline_mode=pipeline_mode,
+            failure_reason=(
+                f"Extreme-scale composed registration failed at {extreme_res.failure_stage}: "
+                f"{extreme_res.failure_reason}"
+            ),
+            failure_stage="extreme_scale_registration",
+            pair_type=classification.pair_type.value,
+            scale_ratio=extreme_res.total_scale_ratio,
+            timings=timings,
+        )
+
+    # 5. Warp OHRC into IIRS frame using composed transform
+    t0 = time.perf_counter()
+    try:
+        reg_result = warp_image(
+            ohrc_raw.data,
+            extreme_res.composed_transform_matrix,
+            TransformModel.AFFINE,
+            target_width=iirs_raw.width,
+            target_height=iirs_raw.height,
+        )
+    except Exception as exc:
+        return RegistrationPipelineResult(
+            result_id=result_id,
+            success=False,
+            pipeline_mode=pipeline_mode,
+            failure_reason=f"Warp failed: {exc}",
+            failure_stage="warp",
+            pair_type=classification.pair_type.value,
+            scale_ratio=extreme_res.total_scale_ratio,
+            timings=timings,
+        )
+    timings["warp"] = time.perf_counter() - t0
+
+    if not reg_result.success:
+        return RegistrationPipelineResult(
+            result_id=result_id,
+            success=False,
+            pipeline_mode=pipeline_mode,
+            failure_reason=f"Warp failed: {reg_result.failure_reason}",
+            failure_stage="warp",
+            pair_type=classification.pair_type.value,
+            scale_ratio=extreme_res.total_scale_ratio,
+            timings=timings,
+        )
+
+    # 6. Build quality summary from Stage B metrics (IIRS-space)
+    # (No match-level visualization for composed registration —
+    #  correspondences exist only in intermediate spaces)
+    t0 = time.perf_counter()
+    summary = MatchQualitySummary(
+        inlier_count=extreme_res.inlier_count_stage_b,
+        outlier_count=0,
+        total_correspondences=extreme_res.inlier_count_stage_b,
+        inlier_ratio=1.0,
+        inlier_rmse=extreme_res.inlier_rmse_stage_b,
+        all_rmse=extreme_res.inlier_rmse_stage_b,
+        spatial_entropy=0.0,
+        quality_grade="composed",
+        transform_model="affine",
+        estimator_method="MAGSAC_composed",
+    )
+    timings["evaluation"] = time.perf_counter() - t0
+
+    # 7. Visualization
+    t0 = time.perf_counter()
+    iirs_display = _to_display(iirs_raw.data)
+    overlay_vis = draw_registration_overlay(
+        iirs_display, _to_display(reg_result.registered_image),
+    )
+    timings["visualization"] = time.perf_counter() - t0
+
+    # 8. Total timing
+    timings["total"] = time.perf_counter() - total_start
+
+    logger.info(
+        "Extreme-scale composed registration complete: id=%s, "
+        "stage_a inliers=%d (RMSE=%.3f TMC-2 px), "
+        "stage_b inliers=%d (RMSE=%.3f IIRS px), total=%.3f s",
+        result_id,
+        extreme_res.inlier_count_stage_a,
+        extreme_res.inlier_rmse_stage_a,
+        extreme_res.inlier_count_stage_b,
+        extreme_res.inlier_rmse_stage_b,
+        timings["total"],
+    )
+
+    return RegistrationPipelineResult(
+        result_id=result_id,
+        success=True,
+        pipeline_mode=pipeline_mode,
+        quality_summary=summary,
+        registered_image=reg_result.registered_image,
+        overlay_visualization=overlay_vis,
+        timings=timings,
+        pair_type=classification.pair_type.value,
+        scale_ratio=extreme_res.total_scale_ratio,
+    )
+
+
 # ===================================================================
 # Pipeline orchestrator
 # ===================================================================
@@ -573,6 +774,7 @@ def run_classical_registration(
     ratio_threshold: float = 0.75,
     reproj_threshold: float = 3.0,
     confidence: float = 0.999,
+    tmc2_bridge_path: str | Path | None = None,
 ) -> RegistrationPipelineResult:
     """Execute the full classical registration pipeline.
 
@@ -590,6 +792,10 @@ def run_classical_registration(
         MAGSAC++ reprojection threshold in pixels.
     confidence : float
         Estimation confidence (0–1).
+    tmc2_bridge_path : str | Path | None
+        Path to TMC-2 bridge image for extreme-scale OHRC<->IIRS registration.
+        Required when pair classification yields CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS.
+        Ignored for all other pair types.
 
     Returns
     -------
@@ -644,6 +850,33 @@ def run_classical_registration(
             ref_path=ref_path,
             tgt_path=tgt_path,
             classification=classification,
+            transform_model=transform_model,
+            ratio_threshold=ratio_threshold,
+            reproj_threshold=reproj_threshold,
+            confidence=confidence,
+            result_id=result_id,
+            total_start=total_start,
+        )
+
+    # --- 0d. Dedicated extreme-scale branch for OHRC <-> IIRS via TMC-2 bridge ---
+    if classification.pair_type == PairType.CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS and classification.is_implemented:
+        if tmc2_bridge_path is None:
+            return RegistrationPipelineResult(
+                result_id=result_id,
+                success=False,
+                pipeline_mode=classification.recommended_pipeline_stage,
+                failure_reason=(
+                    "Extreme-scale OHRC<->IIRS registration requires a TMC-2 bridge image "
+                    "(tmc2_bridge_path argument). No bridge image was provided."
+                ),
+                failure_stage="configuration",
+                pair_type=classification.pair_type.value,
+            )
+        return _run_extreme_scale_registration(
+            ref_path=ref_path,
+            tgt_path=tgt_path,
+            classification=classification,
+            tmc2_bridge_path=tmc2_bridge_path,
             transform_model=transform_model,
             ratio_threshold=ratio_threshold,
             reproj_threshold=reproj_threshold,

@@ -207,16 +207,21 @@ class TestCrossModalGuards:
         assert "only supports affine" in res.failure_reason
         assert res.pair_type == "CROSS_MODAL_TMC2_IIRS"
 
-    def test_cross_modal_extreme_scale_ohrc_iirs_rejected(self):
-        """OHRC <-> IIRS (~394x scale + cross-modal) must remain rejected."""
+    def test_cross_modal_extreme_scale_ohrc_iirs_requires_bridge(self):
+        """OHRC <-> IIRS (~394x scale + cross-modal) requires TMC-2 bridge image.
+
+        The pair type is now is_implemented=True. It enters the dedicated extreme-scale
+        branch and fails at 'configuration' because no bridge path was provided.
+        """
         res = run_classical_registration(
             OHRC_XML, IIRS_XML, transform_model="affine"
         )
 
         assert res.success is False
-        assert res.failure_stage == "pair_classification"
+        assert res.failure_stage == "configuration"
         assert res.pair_type == "CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS"
-        assert "Unsupported pair type" in res.failure_reason
+        assert res.pipeline_mode == "extreme_scale_composed_v1"
+        assert "TMC-2 bridge" in res.failure_reason
 
 
 # =========================================================================

@@ -69,17 +69,22 @@ class TestCrossInstrumentRejectionGuard:
         assert "load" in result.timings
         assert "cross_modal_registration" in result.timings
 
-    def test_cross_modal_extreme_scale_ohrc_iirs_rejected(self):
-        """OHRC (0.25m visible) vs IIRS (82.7m IR, >300x ratio) must be rejected."""
+    def test_cross_modal_extreme_scale_ohrc_iirs_requires_bridge(self):
+        """OHRC (0.25m visible) vs IIRS (82.7m IR, ~394x ratio) requires TMC-2 bridge.
+
+        The pair type is now is_implemented=True with extreme_scale_composed_v1.
+        It passes the pair_classification guard and enters the dedicated extreme-scale
+        branch, which immediately fails at 'configuration' because no TMC-2 bridge
+        image was provided (tmc2_bridge_path=None).
+        """
         result = run_classical_registration(OHRC_XML, IIRS_XML)
 
         assert result.success is False
-        assert result.failure_stage == "pair_classification"
+        assert result.failure_stage == "configuration"
         assert result.pair_type == "CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS"
-        assert "CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS" in result.failure_reason
-        assert ">300x ratio" in result.failure_reason
-        assert "sift" not in result.timings
-        assert "load" not in result.timings
+        assert result.pipeline_mode == "extreme_scale_composed_v1"
+        assert "TMC-2 bridge" in result.failure_reason
+        assert "tmc2_bridge_path" in result.failure_reason
         assert result.registered_image is None
         assert result.quality_summary is None
 
@@ -101,9 +106,9 @@ class TestCrossInstrumentRejectionGuard:
 
         res_iirs_ohrc = run_classical_registration(IIRS_XML, OHRC_XML)
         assert res_iirs_ohrc.success is False
-        assert res_iirs_ohrc.failure_stage == "pair_classification"
+        assert res_iirs_ohrc.failure_stage == "configuration"
         assert res_iirs_ohrc.pair_type == "CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS"
-        assert "sift" not in res_iirs_ohrc.timings
+        assert "TMC-2 bridge" in res_iirs_ohrc.failure_reason
 
 
 # =========================================================================
