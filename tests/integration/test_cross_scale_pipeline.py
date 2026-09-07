@@ -170,6 +170,9 @@ class TestCrossScalePipelineE2E:
         assert res1.success is True
         assert res1.pipeline_mode == "cross_scale_affine_v1"
         assert res1.pair_type == "CROSS_SCALE_OHRC_TMC2"
+        assert res1.quality_summary is not None
+        assert res1.registered_image is not None
+        assert res1.spatial is not None
         assert res1.quality_summary.inlier_count > 0
         assert res1.registered_image.shape == (25, 25)
         assert res1.quality_summary.inlier_median_error <= res1.quality_summary.inlier_rmse
@@ -182,6 +185,9 @@ class TestCrossScalePipelineE2E:
         assert res2.success is True
         assert res2.pipeline_mode == "cross_scale_affine_v1"
         assert res2.pair_type == "CROSS_SCALE_OHRC_TMC2"
+        assert res2.quality_summary is not None
+        assert res2.registered_image is not None
+        assert res2.spatial is not None
         assert res2.quality_summary.inlier_count > 0
         assert res2.registered_image.shape == (25, 25)
         assert res2.quality_summary.inlier_median_error <= res2.quality_summary.inlier_rmse
@@ -228,6 +234,7 @@ class TestBaselinePreservationRegression:
         assert res.success is True
         assert res.pipeline_mode == "classical_sift"
         assert res.pair_type == "UNCLASSIFIED"
+        assert res.quality_summary is not None
         assert res.quality_summary.inlier_count == 102
         assert res.quality_summary.total_correspondences == 103
         assert math.isclose(res.quality_summary.inlier_rmse, 0.22398736, rel_tol=1e-3)
@@ -254,6 +261,7 @@ class TestBaselinePreservationRegression:
         assert res.success is True
         assert res.pipeline_mode == "classical_sift"
         assert res.pair_type == "SAME_INSTRUMENT_TMC2"
+        assert res.quality_summary is not None
         assert 250 <= res.quality_summary.inlier_count <= 260
         assert 250 <= res.quality_summary.total_correspondences <= 260
         assert math.isclose(res.quality_summary.inlier_rmse, 0.119, abs_tol=0.01)

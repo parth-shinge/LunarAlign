@@ -413,7 +413,9 @@ To prevent silent and misleading execution on scientifically unsupported cross-i
   - Classifies the image pair into defined categories (`SAME_INSTRUMENT_TMC2`, `SAME_INSTRUMENT_OHRC`, `SAME_INSTRUMENT_IIRS`, `CROSS_SCALE_OHRC_TMC2`, `CROSS_MODAL_TMC2_IIRS`, `CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS`, `UNCLASSIFIED`).
   - Evaluates whether the pair category has a mature, validated pipeline implementation (`is_implemented`).
 
-- **Cross-Scale Routing (`CROSS_SCALE_OHRC_TMC2`)**:
+### Cross-Scale Registration (`CROSS_SCALE_OHRC_TMC2`)
+
+- **Cross-Scale Routing**:
   - `CROSS_SCALE_OHRC_TMC2` evaluates to `is_implemented=True` with recommended pipeline stage `cross_scale_affine_v1`.
   - In `run_classical_registration()` (`backend/core/registration_service.py:L626-638`), it routes to a dedicated cross-scale pipeline path (`_run_cross_scale_registration()`):
     - Rejects non-affine transform models (`configuration` failure stage).
@@ -424,7 +426,25 @@ To prevent silent and misleading execution on scientifically unsupported cross-i
     - Warps the full-resolution fine image into the coarse target frame using `warping.warp_image()`.
     - Evaluates registration quality in coarse pixel coordinates via `evaluation.metrics` and `evaluation.spatial`.
 
-- **Cross-Modal Routing (`CROSS_MODAL_TMC2_IIRS`)**:
+#### Known Limitations (Cross-Scale Registration)
+
+KNOWN LIMITATION: The current OHRC↔TMC-2 real-data end-to-end test
+(test_cli_cross_scale_ohrc_tmc2_e2e) uses small (500x500 downsampled to 25x25)
+fixtures, which is too small for SIFT to produce a robust number of well-distributed
+correspondences (currently 5 correspondences, spatial entropy 0.228). This is
+confirmed to be a fixture-size limitation, not an algorithmic flaw — the same
+cross-scale transform composition logic produces 120/149 inliers with 0.816 spatial
+entropy on a large synthetic 8000x8000 scene. However, the large-scale test is
+synthetic; it has NOT been confirmed that real OHRC/TMC-2 imagery at a comparable
+scale will produce similarly favorable results, since real lunar texture density
+may differ from a synthetic test scene. Do not present the current small real-data
+E2E test's correspondence count or entropy as representative of real-world
+performance. Obtaining larger real OHRC/TMC-2 fixtures for proper validation is
+listed as follow-up work.
+
+### Cross-Modal Registration (`CROSS_MODAL_TMC2_IIRS`)
+
+- **Cross-Modal Routing**:
   - `CROSS_MODAL_TMC2_IIRS` evaluates to `is_implemented=True` with recommended pipeline stage `cross_modal_phase_congruency_v1` (`backend/routing/pair_classifier.py:L73-78`).
   - In `run_classical_registration()` (`backend/core/registration_service.py:L641-653`), it routes to a dedicated cross-modal pipeline path (`_run_cross_modal_registration()`, `backend/core/registration_service.py:L473-605`):
     - Rejects non-affine transform models (`configuration` failure stage; composition math is affine-only).
@@ -435,6 +455,22 @@ To prevent silent and misleading execution on scientifically unsupported cross-i
     - Converts PC maps to uint8 representations for classical SIFT/FLANN/MAGSAC++ estimation and analytically composes the coarse-space affine transform with the downsampling factor ($M_{\text{full}} = M_{\text{coarse}} \cdot S$).
     - Warps the original full-resolution fine (TMC-2) image into the coarse (IIRS) target frame using `warping.warp_image()`.
     - Evaluates registration quality via `evaluation.metrics` and `evaluation.spatial`.
+
+#### Known Limitations (Cross-Modal Registration)
+
+KNOWN LIMITATION: The current TMC-2↔IIRS test's 'derived IIRS' fixture
+(_create_derived_iirs_from_tmc2) simulates IIRS's 256-band hyperspectral structure by
+tiling the SAME 2D downsampled TMC-2 slice across 16 bands (np.repeat), not genuine
+per-band spectral diversity. This means the passing result (103/151 inliers, RMSE
+0.569px, under a synthetic intensity inversion) demonstrates that Phase Congruency
+provides structural robustness under a simulated modality/contrast difference — it
+does NOT demonstrate registration performance against real IIRS spectral data, which
+has genuinely different per-band content (256 distinct wavelengths, not a repeated
+single band). Do not present this result as validating cross-modal registration
+against real IIRS hyperspectral characteristics. A real IIRS PDS4 sample with genuine
+multi-band content should be used for a stronger validation pass as follow-up work.
+
+### Routing Edge Cases and Guard Behavior
 
 - **Behavior on Rejection**:
   - Unsupported cross-instrument pairs (`CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS` combining ~394x extreme scale and visible-to-infrared cross-modality) have `is_implemented=False` (`backend/routing/pair_classifier.py:L79-84`).
