@@ -5,7 +5,7 @@ processing stage and implementation status.
 
 This is a SCAFFOLD module only. It does not invoke or implement cross-modal
 or multi-scale algorithms (Phase Congruency, MIND, RIFT, pyramid downsampling,
-crater anchoring). It is not yet wired into the live registration pipeline.
+crater anchoring). It is wired into the live registration pipeline as a pre-flight guard in backend.core.registration_service.
 """
 
 from __future__ import annotations
@@ -66,15 +66,15 @@ _PAIR_CONFIGS: dict[tuple[str, str], tuple[PairType, bool, str, str]] = {
     ),
     ("OHRC", "TMC2"): (
         PairType.CROSS_SCALE_OHRC_TMC2,
-        False,
-        "not_implemented",
-        "Cross-scale pair (OHRC ~0.25m/px vs TMC-2 ~5m/px, ~20x ratio); requires coarse-to-fine scale handling (pyramid downsampling/crater anchoring).",
+        True,
+        "cross_scale_affine_v1",
+        "Cross-scale pair (OHRC ~0.21–0.25m/px vs TMC-2 ~4.27–5.0m/px, ~20x ratio); supported via resolution-normalization downsampling and analytical affine transform composition (no multi-level pyramid, ROI refinement, or crater anchoring).",
     ),
     ("IIRS", "TMC2"): (
         PairType.CROSS_MODAL_TMC2_IIRS,
-        False,
-        "not_implemented",
-        "Cross-modal pair (TMC-2 visible vs IIRS infrared); requires cross-modal feature representations (Phase Congruency, MIND, or RIFT).",
+        True,
+        "cross_modal_phase_congruency_v1",
+        "Cross-modal pair (TMC-2 ~4.27m/px visible vs IIRS 82.70m/px infrared, ~19.4x ratio); supported via resolution-normalization downsampling, phase congruency structural feature representation, classical SIFT/FLANN/MAGSAC++ matching, and analytical affine transform composition (affine-only; NOT MIND, NOT RIFT; not validated on real overlapping imagery since no overlapping pair currently exists).",
     ),
     ("IIRS", "OHRC"): (
         PairType.CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS,

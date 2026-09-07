@@ -59,10 +59,10 @@ class TestCrossInstrumentClassification:
         assert result.instrument_a == "OHRC"
         assert result.instrument_b == "TMC2"
         assert result.is_same_instrument is False
-        assert result.is_implemented is False
-        assert result.recommended_pipeline_stage == "not_implemented"
+        assert result.is_implemented is True
+        assert result.recommended_pipeline_stage == "cross_scale_affine_v1"
         assert len(result.reason) > 0
-        assert "coarse-to-fine scale handling" in result.reason.lower() or "scale" in result.reason.lower()
+        assert "scale" in result.reason.lower()
 
     def test_cross_modal_tmc2_iirs(self):
         result = classify_pair(TMC2_XML, IIRS_XML)
@@ -70,12 +70,10 @@ class TestCrossInstrumentClassification:
         assert result.instrument_a == "TMC2"
         assert result.instrument_b == "IIRS"
         assert result.is_same_instrument is False
-        assert result.is_implemented is False
-        assert result.recommended_pipeline_stage == "not_implemented"
+        assert result.is_implemented is True
+        assert result.recommended_pipeline_stage == "cross_modal_phase_congruency_v1"
         assert len(result.reason) > 0
-        assert any(
-            cap in result.reason for cap in ["Phase Congruency", "MIND", "RIFT", "cross-modal"]
-        )
+        assert "phase congruency" in result.reason.lower()
 
     def test_cross_modal_extreme_scale_ohrc_iirs(self):
         result = classify_pair(OHRC_XML, IIRS_XML)

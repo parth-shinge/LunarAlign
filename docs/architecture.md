@@ -43,22 +43,24 @@ classical CV algorithms (SIFT, Phase Congruency, etc.).
 | PNG       | Pillow    | Standard RGB/RGBA/grayscale (`io.py:L71`) |
 | JPEG      | Pillow    | Lossy; RGB uint8 (`io.py:L71`)           |
 | TIFF      | rasterio → Pillow fallback | Supports multi-band GeoTIFF (`io.py:L69, L141-161`) |
-| PDS4 XML  | rasterio GDAL PDS4 driver | TMC-2 and OHRC (`io.py:L73-74, L84-126`) |
+| PDS4 XML  | rasterio GDAL PDS4 driver | TMC-2, OHRC, and IIRS (`io.py:L73-75, L85-185`) |
 
 For TIFF files, rasterio is attempted first (accurate multi-band and
 GeoTIFF support via `_load_rasterio` at `backend/preprocessing/io.py:L164-210`).
 If rasterio fails, Pillow is used as a fallback for simple TIFF files.
 
 For PDS4 `.xml` label inputs, `load_image()` (`backend/preprocessing/io.py:L42-76`)
-delegates to `_load_pds4()` (`backend/preprocessing/io.py:L84-126`). The loader
+delegates to `_load_pds4()` (`backend/preprocessing/io.py:L85-185`). The loader
 validates that the file is a genuine PDS4 `Product_Observational` XML label via
 `is_pds4_label()` (`backend/preprocessing/pds4.py:L112-125`), verifies the instrument
 identity using `identify_instrument()` (`backend/preprocessing/pds4.py:L148-175`),
-and accepts **TMC-2** and **OHRC** products (`io.py:L118-122`),
+and accepts **TMC-2**, **OHRC**, and **IIRS** products (`io.py:L126-129`),
 loading the pixel raster via `load_pds4_raster()` (`backend/preprocessing/pds4.py:L340-416`).
-**IIRS** products remain explicitly unsupported at this stage (`io.py:L118-122` raises
-`ValueError("Unsupported PDS4 instrument: 'IIRS'. Only TMC-2 and OHRC products are supported in this pipeline.")`)
-pending architectural decisions on hyperspectral band reduction (simple band-averaging vs. PCA).
+For **IIRS** hyperspectral products, `_load_pds4()` (`backend/preprocessing/io.py:L137-185`)
+extracts per-band wavelength metadata (`extract_iirs_band_wavelengths`), selects solar-reflective
+bands (< 2500 nm via `select_solar_reflective_bands`), subsets the spectral cube (`select_bands`),
+and reduces the multi-band cube to a 2D float32 image via per-pixel mean reduction (`reduce_bands_mean`),
+followed by dynamic range normalization (`_normalize_dynamic_range`).
 Any non-PDS4 XML or unsupported instrument product raises a descriptive `ValueError`.
 
 Multi-band rasters retain **all** bands in the RawImage.  No bands are
@@ -384,6 +386,9 @@ backend/api/register.py        (thin route handler)
     ▼
 backend/core/registration_service.py   (orchestrator)
     │
+    ├─→ routing.pair_classifier.classify_pair() [Pre-flight Guard]
+    │      └─→ (if not implemented: early exit with success=False)
+    │
     ├─→ preprocessing.io.load_image()
     ├─→ preprocessing.grayscale.to_feature_image()
     ├─→ features.sift.extract_sift()
@@ -399,6 +404,47 @@ backend/core/registration_service.py   (orchestrator)
 backend/core/result_store.py   (in-memory, FIFO eviction)
 ```
 
+### Pre-Flight Pair Classification Guard and Routing
+
+To prevent silent and misleading execution on scientifically unsupported cross-instrument pairs, `run_classical_registration()` executes an early pre-flight compatibility check via `classify_pair()` (`backend/routing/pair_classifier.py:L106-170`) immediately after parameter validation and before any image loading or feature extraction:
+
+- **What it checks**:
+  - Automatically identifies instrument metadata from PDS4 XML labels via `identify_instrument()`.
+  - Classifies the image pair into defined categories (`SAME_INSTRUMENT_TMC2`, `SAME_INSTRUMENT_OHRC`, `SAME_INSTRUMENT_IIRS`, `CROSS_SCALE_OHRC_TMC2`, `CROSS_MODAL_TMC2_IIRS`, `CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS`, `UNCLASSIFIED`).
+  - Evaluates whether the pair category has a mature, validated pipeline implementation (`is_implemented`).
+
+- **Cross-Scale Routing (`CROSS_SCALE_OHRC_TMC2`)**:
+  - `CROSS_SCALE_OHRC_TMC2` evaluates to `is_implemented=True` with recommended pipeline stage `cross_scale_affine_v1`.
+  - In `run_classical_registration()` (`backend/core/registration_service.py:L626-638`), it routes to a dedicated cross-scale pipeline path (`_run_cross_scale_registration()`):
+    - Rejects non-affine transform models (`configuration` failure stage).
+    - Determines fine (OHRC) and coarse (TMC-2) inputs dynamically from classification metadata regardless of upload order.
+    - Extracts confirmed spatial resolutions from PDS4 metadata via `scale_handler.get_resolution()`.
+    - Normalizes resolution by anti-aliased Gaussian downsampling of the fine image via `register_cross_scale()` (`backend/core/cross_scale_registration.py`).
+    - Estimates coarse-space affine transform using classical SIFT/FLANN/MAGSAC++ and analytically composes it with the downsampling factor ($M_{\text{full}} = M_{\text{coarse}} \cdot S$).
+    - Warps the full-resolution fine image into the coarse target frame using `warping.warp_image()`.
+    - Evaluates registration quality in coarse pixel coordinates via `evaluation.metrics` and `evaluation.spatial`.
+
+- **Cross-Modal Routing (`CROSS_MODAL_TMC2_IIRS`)**:
+  - `CROSS_MODAL_TMC2_IIRS` evaluates to `is_implemented=True` with recommended pipeline stage `cross_modal_phase_congruency_v1` (`backend/routing/pair_classifier.py:L73-78`).
+  - In `run_classical_registration()` (`backend/core/registration_service.py:L641-653`), it routes to a dedicated cross-modal pipeline path (`_run_cross_modal_registration()`, `backend/core/registration_service.py:L473-605`):
+    - Rejects non-affine transform models (`configuration` failure stage; composition math is affine-only).
+    - Determines fine (TMC-2, ~4.27 m/px) and coarse (IIRS, 82.70 m/px) inputs dynamically from classification metadata regardless of upload order.
+    - Extracts confirmed spatial resolutions from PDS4 metadata via `scale_handler.get_resolution()`.
+    - Normalizes resolution by anti-aliased Gaussian downsampling of the fine image (~19.4x ratio) via `register_cross_modal()` (`backend/core/cross_modal_registration.py:L175-422`).
+    - Computes frequency-domain phase congruency maps (`backend/preprocessing/illumination.py`) on both images to extract structural edge/feature energy invariant to contrast and illumination differences.
+    - Converts PC maps to uint8 representations for classical SIFT/FLANN/MAGSAC++ estimation and analytically composes the coarse-space affine transform with the downsampling factor ($M_{\text{full}} = M_{\text{coarse}} \cdot S$).
+    - Warps the original full-resolution fine (TMC-2) image into the coarse (IIRS) target frame using `warping.warp_image()`.
+    - Evaluates registration quality via `evaluation.metrics` and `evaluation.spatial`.
+
+- **Behavior on Rejection**:
+  - Unsupported cross-instrument pairs (`CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS` combining ~394x extreme scale and visible-to-infrared cross-modality) have `is_implemented=False` (`backend/routing/pair_classifier.py:L79-84`).
+  - The pipeline immediately halts and returns a `RegistrationPipelineResult` with `success=False`, `failure_stage="pair_classification"`, and a descriptive `failure_reason` citing the pair category and required algorithmic capabilities.
+  - Downstream stages (`load_image`, `to_feature_image`, `extract_sift`, `flann_knn_match`, `estimate_transform`, `warp_image`) are completely bypassed (`timings` remains empty).
+
+- **Unaffected Pairs**:
+  - **Same-instrument PDS4 pairs** (`TMC2-TMC2`, `OHRC-OHRC`, `IIRS-IIRS`) evaluate to `is_implemented=True` and proceed through the classical SIFT baseline without modification.
+  - **Non-PDS4 / plain images** (e.g., PNG, JPEG, TIFF) where instrument metadata cannot be extracted fall back to `UNCLASSIFIED` with `is_implemented=True`, ensuring standard single-modality demo and testing workflows continue to run unaffected with identical numeric outcomes.
+
 ### Result Storage
 
 - In-memory `OrderedDict` with FIFO eviction (max 50 results)
@@ -406,12 +452,17 @@ backend/core/result_store.py   (in-memory, FIFO eviction)
 - Results keyed by UUID-based `result_id`
 - Thread-safe access
 
-### Pipeline Mode
+### Pipeline Modes
 
-Currently: `classical_sift` only (same-modality baseline).
+Supported:
+- `classical_sift` (same-modality baseline: TMC2-TMC2, OHRC-OHRC, IIRS-IIRS, UNCLASSIFIED)
+- `cross_scale_affine_v1` (cross-scale OHRC ↔ TMC-2 via resolution normalization and composed affine transform)
+- `cross_modal_phase_congruency_v1` (cross-modal TMC-2 ↔ IIRS visible-to-infrared via phase congruency, resolution normalization, and composed affine transform)
 
 Not yet supported:
-- Cross-modal (OHRC ↔ IIRS, OHRC ↔ TMC-2, TMC-2 ↔ IIRS)
-- Illumination-invariant registration
-- Extreme-scale registration
+- Extreme-scale cross-modal (OHRC ↔ IIRS: ~394x scale + visible-to-infrared)
+- Deep structural representations (MIND, RIFT)
+- Multi-level pyramid feature tracking / ROI refinement on full-resolution OHRC
+- Crater morphological anchoring
 - Sub-pixel refinement
+

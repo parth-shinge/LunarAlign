@@ -867,8 +867,9 @@ class TestScaleHandler:
         from backend.preprocessing.scale_handler import get_resolution
 
         assert get_resolution(None, "OHRC") == 0.21
-        assert get_resolution(None, "TMC-2") == 5.0
-        assert get_resolution(None, "TMC2") == 5.0
+        assert get_resolution(None, "TMC-2") == 4.27
+        assert get_resolution(None, "TMC2") == 4.27
+        assert get_resolution(None, "TMC") == 4.27
         assert get_resolution(None, "IIRS") == 82.7
 
     def test_get_resolution_from_metadata(self):

@@ -1,8 +1,8 @@
-﻿"""
+"""
 SIH26166 — Scale Handling and Resolution Alignment (Module 06).
 
 Handles cross-sensor multi-resolution scaling (e.g. matching OHRC at 0.21 m/px
-to TMC-2 at 5.0 m/px or IIRS at 82.7 m/px) via anti-aliased Gaussian pyramids.
+to TMC-2 at 4.27 m/px or IIRS at 82.7 m/px) via anti-aliased Gaussian pyramids.
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ logger = logging.getLogger("sih26166.preprocessing.scale_handler")
 # Standard instrument ground sampling distances (meters per pixel)
 DEFAULT_RESOLUTIONS: dict[str, float] = {
     "OHRC": 0.21,
-    "TMC2": 5.0,
-    "TMC-2": 5.0,
-    "TMC": 5.0,
+    "TMC2": 4.27,
+    "TMC-2": 4.27,
+    "TMC": 4.27,
     "IIRS": 82.7,
 }
 
@@ -33,7 +33,7 @@ def compute_scale_ratio(res_source: float, res_target: float) -> float:
     res_source : float
         Pixel resolution of source image in meters/pixel (e.g. 0.21 for OHRC).
     res_target : float
-        Pixel resolution of target image in meters/pixel (e.g. 5.0 for TMC-2).
+        Pixel resolution of target image in meters/pixel (e.g. 4.27 for TMC-2).
 
     Returns
     -------

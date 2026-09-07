@@ -33,6 +33,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from backend.features.models import FilteredMatch
 from backend.features.sift import extract_sift
 from backend.geometry.estimation import estimate_transform
 from backend.geometry.models import GeometricResult, TransformModel
@@ -86,6 +87,13 @@ class CrossScaleRegistrationResult:
     inlier_rmse: float = 0.0
     transform_model: str = "affine"
     failure_reason: str = ""
+    inlier_median_error: float = 0.0
+    inlier_max_error: float = 0.0
+    all_rmse: float = 0.0
+    all_median_error: float = 0.0
+    per_match_errors: np.ndarray | None = None
+    matches: list[FilteredMatch] = field(default_factory=list)
+    inlier_mask: np.ndarray | None = None
 
 
 def compose_scale_transform(
@@ -350,7 +358,13 @@ def register_cross_scale(
     m_coarse = geo_result.transform_matrix
     m_full = compose_scale_transform(m_coarse, scale_ratio, model_enum)
 
-    inlier_rmse = geo_result.error_metrics.inlier_rmse if geo_result.error_metrics else 0.0
+    em = geo_result.error_metrics
+    inlier_rmse = em.inlier_rmse if em else 0.0
+    inlier_median = em.inlier_median_error if em else 0.0
+    inlier_max = em.inlier_max_error if em else 0.0
+    all_rmse = em.all_rmse if em else 0.0
+    all_median = em.all_median_error if em else 0.0
+    per_match = em.per_match_errors if em else None
 
     return CrossScaleRegistrationResult(
         success=True,
@@ -363,4 +377,11 @@ def register_cross_scale(
         inlier_rmse=inlier_rmse,
         transform_model=transform_model,
         failure_reason="",
+        inlier_median_error=inlier_median,
+        inlier_max_error=inlier_max,
+        all_rmse=all_rmse,
+        all_median_error=all_median,
+        per_match_errors=per_match,
+        matches=match_result.matches if match_result else [],
+        inlier_mask=geo_result.inlier_mask,
     )

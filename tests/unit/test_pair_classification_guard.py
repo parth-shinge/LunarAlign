@@ -43,35 +43,31 @@ TGT_PNG = FIXTURES_DIR / "tgt_lunar.png"
 class TestCrossInstrumentRejectionGuard:
     """Test early pre-flight rejection of unsupported cross-instrument pairs."""
 
-    def test_cross_scale_ohrc_tmc2_rejected(self):
-        """OHRC vs TMC-2 (>20x scale ratio) must be rejected before SIFT/loading."""
+    def test_cross_scale_ohrc_tmc2_routed_to_cross_scale(self):
+        """OHRC vs TMC-2 is now implemented and routed to cross_scale_registration (not rejected at guard)."""
         result = run_classical_registration(OHRC_XML, TMC2_XML)
 
-        assert result.success is False
-        assert result.failure_stage == "pair_classification"
+        # Because the sample fixtures do not spatially overlap, registration fails at cross_scale stage,
+        # proving it passed the pair_classification guard and entered the cross-scale pipeline.
         assert result.pair_type == "CROSS_SCALE_OHRC_TMC2"
-        assert "CROSS_SCALE_OHRC_TMC2" in result.failure_reason
-        assert "coarse-to-fine scale handling" in result.failure_reason
-        # Prove it never reached load or SIFT stages
-        assert "sift" not in result.timings
-        assert "load" not in result.timings
-        assert result.registered_image is None
-        assert result.quality_summary is None
+        assert result.pipeline_mode == "cross_scale_affine_v1"
+        assert result.failure_stage == "cross_scale_registration"
+        assert "cross-scale registration" in result.failure_reason.lower()
+        assert "load" in result.timings
+        assert "cross_scale_registration" in result.timings
 
-    def test_cross_modal_tmc2_iirs_rejected(self):
-        """TMC-2 (visible) vs IIRS (infrared) must be rejected before SIFT/loading."""
+    def test_cross_modal_tmc2_iirs_routed(self):
+        """TMC-2 (visible) vs IIRS (infrared) now routes to dedicated cross-modal branch."""
         result = run_classical_registration(TMC2_XML, IIRS_XML)
 
         assert result.success is False
-        assert result.failure_stage == "pair_classification"
+        assert result.failure_stage == "cross_modal_registration"
         assert result.pair_type == "CROSS_MODAL_TMC2_IIRS"
-        assert "CROSS_MODAL_TMC2_IIRS" in result.failure_reason
-        assert "Phase Congruency, MIND, or RIFT" in result.failure_reason
-        # Prove it never reached load or SIFT stages
-        assert "sift" not in result.timings
-        assert "load" not in result.timings
-        assert result.registered_image is None
-        assert result.quality_summary is None
+        assert result.pipeline_mode == "cross_modal_phase_congruency_v1"
+        assert "cross-modal registration" in result.failure_reason.lower()
+        # Proves it reached load and cross_modal_registration stages
+        assert "load" in result.timings
+        assert "cross_modal_registration" in result.timings
 
     def test_cross_modal_extreme_scale_ohrc_iirs_rejected(self):
         """OHRC (0.25m visible) vs IIRS (82.7m IR, >300x ratio) must be rejected."""
@@ -88,19 +84,20 @@ class TestCrossInstrumentRejectionGuard:
         assert result.quality_summary is None
 
     def test_rejection_is_order_independent(self):
-        """Guard rejection must trigger regardless of reference/target ordering."""
-        # Reverse ordering tests
+        """Routing and guard rejection must trigger regardless of reference/target ordering."""
+        # Reverse ordering tests: TMC2 vs OHRC routes to cross-scale
         res_tmc2_ohrc = run_classical_registration(TMC2_XML, OHRC_XML)
-        assert res_tmc2_ohrc.success is False
-        assert res_tmc2_ohrc.failure_stage == "pair_classification"
         assert res_tmc2_ohrc.pair_type == "CROSS_SCALE_OHRC_TMC2"
-        assert "sift" not in res_tmc2_ohrc.timings
+        assert res_tmc2_ohrc.pipeline_mode == "cross_scale_affine_v1"
+        assert res_tmc2_ohrc.failure_stage == "cross_scale_registration"
 
+        # Reverse ordering for TMC2 vs IIRS routes to cross-modal
         res_iirs_tmc2 = run_classical_registration(IIRS_XML, TMC2_XML)
         assert res_iirs_tmc2.success is False
-        assert res_iirs_tmc2.failure_stage == "pair_classification"
+        assert res_iirs_tmc2.failure_stage == "cross_modal_registration"
         assert res_iirs_tmc2.pair_type == "CROSS_MODAL_TMC2_IIRS"
-        assert "sift" not in res_iirs_tmc2.timings
+        assert res_iirs_tmc2.pipeline_mode == "cross_modal_phase_congruency_v1"
+        assert "cross_modal_registration" in res_iirs_tmc2.timings
 
         res_iirs_ohrc = run_classical_registration(IIRS_XML, OHRC_XML)
         assert res_iirs_ohrc.success is False
