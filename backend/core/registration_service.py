@@ -709,20 +709,39 @@ def _run_extreme_scale_registration(
         )
 
     # 6. Build quality summary from Stage B metrics (IIRS-space)
-    # (No match-level visualization for composed registration —
-    #  correspondences exist only in intermediate spaces)
+    # (Direct correspondences do not exist for composed registration;
+    #  correspondences exist only in intermediate Stage A and Stage B spaces)
     t0 = time.perf_counter()
+    stage_b_total = (
+        extreme_res.intermediate.stage_b_result.total_correspondences
+        if extreme_res.intermediate and extreme_res.intermediate.stage_b_result
+        else extreme_res.inlier_count_stage_b
+    )
+    inlier_count = extreme_res.inlier_count_stage_b
+    outlier_count = max(0, stage_b_total - inlier_count)
+    inlier_ratio = (inlier_count / stage_b_total) if stage_b_total > 0 else 0.0
+    composed_mat = (
+        extreme_res.composed_transform_matrix.tolist()
+        if extreme_res.composed_transform_matrix is not None
+        else None
+    )
+
     summary = MatchQualitySummary(
-        inlier_count=extreme_res.inlier_count_stage_b,
-        outlier_count=0,
-        total_correspondences=extreme_res.inlier_count_stage_b,
-        inlier_ratio=1.0,
+        success=True,
+        total_correspondences=stage_b_total,
+        inlier_count=inlier_count,
+        outlier_count=outlier_count,
+        inlier_ratio=inlier_ratio,
         inlier_rmse=extreme_res.inlier_rmse_stage_b,
         all_rmse=extreme_res.inlier_rmse_stage_b,
-        spatial_entropy=0.0,
-        quality_grade="composed",
+        inlier_median_error=0.0,
+        inlier_max_error=0.0,
+        spatial_entropy=-1.0,  # Not computed for composed registration
         transform_model="affine",
         estimator_method="MAGSAC_composed",
+        transform_matrix=composed_mat,
+        failure_reason="",
+        quality_grade="not_computed_for_composed_registration",
     )
     timings["evaluation"] = time.perf_counter() - t0
 

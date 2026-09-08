@@ -72,6 +72,9 @@ class MatchQualitySummary:
         Transformation matrix as nested lists (JSON-serializable).
     failure_reason : str
         Explanation if estimation failed.
+    quality_grade : str
+        Quality classification or diagnostic flag (e.g.
+        'not_computed_for_composed_registration').
     """
 
     success: bool
@@ -88,6 +91,7 @@ class MatchQualitySummary:
     estimator_method: str
     transform_matrix: list[list[float]] | None
     failure_reason: str = ""
+    quality_grade: str = ""
 
 
 def build_quality_summary(

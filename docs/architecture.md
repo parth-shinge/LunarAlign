@@ -485,15 +485,17 @@ multi-band content should be used for a stronger validation pass as follow-up wo
 #### Known Limitations (Extreme-Scale Composed Registration)
 
 KNOWN LIMITATION: The current OHRC↔IIRS extreme-scale composed registration has been
-validated ONLY on synthetic composed transforms with known ground-truth matrices
-(algebraic composition of predetermined M_A and M_B matrices verified to atol=1e-12).
-This proves the transform composition math is correct but does NOT demonstrate
-registration performance on real overlapping OHRC/TMC-2/IIRS imagery. No such
-overlapping triple fixture (OHRC + TMC-2 + IIRS covering the same lunar region)
-currently exists in the project repository. Additionally, the composed transform's
-accuracy is bounded by the accuracy of both individual stages: errors from Stage A
-(OHRC→TMC-2) and Stage B (TMC-2→IIRS) accumulate through composition. Do not present
-the synthetic test results as demonstrating real-world extreme-scale registration
+validated on synthetic composed transforms and a synthetic three-scale scene. The real
+unmocked E2E test validates an 80x total scale ratio (20x Stage A x 4x Stage B), not the
+true ~394x OHRC<->IIRS ratio; reaching 394x in a test would require an OHRC fixture around
+32000x32000 px due to Phase Congruency's minimum practical resolution (~100px).
+Furthermore, while this proves the transform composition math and multi-stage orchestration
+are correct, it does NOT demonstrate registration performance on real overlapping
+OHRC/TMC-2/IIRS imagery. No such overlapping triple fixture (OHRC + TMC-2 + IIRS covering
+the same lunar region) currently exists in the project repository. Additionally, the
+composed transform's accuracy is bounded by the accuracy of both individual stages: errors
+from Stage A (OHRC→TMC-2) and Stage B (TMC-2→IIRS) accumulate through composition. Do not
+present the synthetic test results as demonstrating real-world extreme-scale registration
 performance. Obtaining overlapping OHRC/TMC-2/IIRS fixtures for proper end-to-end
 validation is listed as follow-up work.
 

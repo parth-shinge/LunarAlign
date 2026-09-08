@@ -792,3 +792,100 @@ class TestTierCRealEndToEnd:
 
         print("\n[PASS] TIER C: Real E2E extreme-scale composed registration verified.")
 
+
+# ===================================================================
+# TIER D: Service layer quality summary verification
+# ===================================================================
+
+class TestExtremeScaleServiceQualitySummary:
+    """Verify MatchQualitySummary constructed in _run_extreme_scale_registration()."""
+
+    def test_quality_summary_real_inlier_ratio_and_flagged_entropy(self, tmp_path):
+        from unittest.mock import MagicMock
+        from backend.core.registration_service import _run_extreme_scale_registration
+        from backend.core.extreme_scale_registration import StageResult, IntermediateInfo
+        from backend.preprocessing.datamodel import RawImage
+        from backend.registration.models import RegistrationResult
+        from backend.geometry.models import TransformModel
+
+        fake_img = np.zeros((50, 50), dtype=np.uint8)
+        raw_img = RawImage(
+            data=fake_img, width=50, height=50, num_bands=1, dtype=np.dtype("uint8"), source_format="png"
+        )
+
+        stage_a_res = StageResult(
+            success=True,
+            transform_matrix=np.eye(2, 3),
+            scale_ratio=0.05,
+            inlier_count=50,
+            total_correspondences=60,
+            inlier_rmse=0.4,
+        )
+        stage_b_res = StageResult(
+            success=True,
+            transform_matrix=np.eye(2, 3),
+            scale_ratio=0.25,
+            inlier_count=15,
+            total_correspondences=20,
+            inlier_rmse=0.8,
+        )
+        fake_extreme_res = ExtremeScaleRegistrationResult(
+            success=True,
+            composed_transform_matrix=np.eye(2, 3),
+            total_scale_ratio=0.0125,
+            inlier_count_stage_a=50,
+            inlier_count_stage_b=15,
+            inlier_rmse_stage_a=0.4,
+            inlier_rmse_stage_b=0.8,
+            intermediate=IntermediateInfo(
+                stage_a_transform=np.eye(2, 3),
+                stage_b_transform=np.eye(2, 3),
+                composed_transform=np.eye(2, 3),
+                tmc2_bridge_image_path="mock_tmc2.tif",
+                stage_a_result=stage_a_res,
+                stage_b_result=stage_b_res,
+            ),
+        )
+
+        classification = MagicMock()
+        classification.recommended_pipeline_stage = "extreme_scale_composed_v1"
+        classification.pair_type.value = "CROSS_MODAL_EXTREME_SCALE_OHRC_IIRS"
+        classification.instrument_a = "OHRC"
+        classification.instrument_b = "IIRS"
+
+        warp_res = MagicMock(success=True, registered_image=fake_img)
+
+        with patch("backend.core.registration_service.load_image", return_value=raw_img), \
+             patch("backend.core.registration_service._extract_resolution", return_value=1.0), \
+             patch("backend.core.registration_service.register_extreme_scale", return_value=fake_extreme_res), \
+             patch("backend.core.registration_service.warp_image", return_value=warp_res), \
+             patch("backend.core.registration_service.draw_registration_overlay", return_value=fake_img):
+
+            result = _run_extreme_scale_registration(
+                ref_path="dummy_ohrc.xml",
+                tgt_path="dummy_iirs.xml",
+                classification=classification,
+                tmc2_bridge_path="dummy_tmc2.xml",
+                transform_model="affine",
+                ratio_threshold=0.75,
+                reproj_threshold=3.0,
+                confidence=0.99,
+                result_id="test-id",
+                total_start=0.0,
+            )
+
+        assert result.success is True
+        summary = result.quality_summary
+        assert summary is not None
+        assert summary.success is True
+        # Real inlier ratio: 15 inliers / 20 total = 0.75 (not hardcoded 1.0)
+        assert summary.inlier_count == 15
+        assert summary.total_correspondences == 20
+        assert summary.outlier_count == 5
+        assert summary.inlier_ratio == pytest.approx(0.75)
+        assert summary.inlier_rmse == pytest.approx(0.8)
+        # Spatial entropy marked -1.0 (uncomputed) and flagged in quality_grade (not silent 0.0)
+        assert summary.spatial_entropy == pytest.approx(-1.0)
+        assert summary.quality_grade == "not_computed_for_composed_registration"
+
+
